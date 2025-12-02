@@ -1,34 +1,39 @@
 const jwt = require('jsonwebtoken');
+const db = require('../db');
 
-// 1. Guardián Básico: Revisa si el token es válido
-const checkAuth = (req, res, next) => {
+// Guardián Básico (Lee Cookie)
+const checkAuth = async (req, res, next) => {
   try {
-    // Buscamos el token en los headers
-    // (Debe venir como "Bearer eyJhbGciOi...")
-    const token = req.headers.authorization.split(' ')[1]; 
-    
+    // CAMBIO: Leemos el token desde la COOKIE
+    const token = req.cookies.token; 
+
     if (!token) {
-      return res.status(401).json({ message: 'No hay token, autorización denegada' });
+      return res.status(401).json({ message: 'No autorizado. Inicia sesión.' });
     }
 
-    // Verificamos el token con nuestro secreto
+    // Verificar Lista Negra
+    const [blacklisted] = await db.query(
+      'SELECT id FROM token_blacklist WHERE token = ?',
+      [token]
+    );
+
+    if (blacklisted.length > 0) {
+      return res.status(401).json({ message: 'Sesión invalidada.' });
+    }
+
+    // Verificar Token
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-    
-    // Guardamos los datos del usuario (id, rol) en la request
-    // para que las siguientes rutas puedan usarlo
     req.user = decodedToken; 
-    next(); // El token es válido, continúa
+    next();
 
   } catch (error) {
-    res.status(401).json({ message: 'Token no es válido' });
+    return res.status(401).json({ message: 'Token no válido o expirado.' });
   }
 };
 
-// 2. Guardián de Rol: Revisa si es Admin
 const checkAdmin = (req, res, next) => {
-  // Este guardián debe usarse *después* de checkAuth
   if (req.user && req.user.tipo_usuario === 'admin') {
-    next(); // Es admin, puede pasar
+    next(); 
   } else {
     res.status(403).json({ message: 'Acceso denegado. Se requiere rol de administrador.' });
   }

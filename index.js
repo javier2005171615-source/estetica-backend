@@ -4,22 +4,27 @@ const express = require('express');
 const cors = require('cors');
 const db = require('./db'); 
 const helmet = require('helmet'); 
+const morgan = require('morgan'); 
+const cookieParser = require('cookie-parser');
 const https = require("https");
 const fs = require("fs");
-// Agregamos morgan para ver los logs (opcional pero recomendado)
-const morgan = require('morgan'); 
+const path = require('path');
 
 const authRoutes = require('./routes/auth');
 
 const app = express();
-const port = 5000; // <-- Este es el puerto correcto
+const port = process.env.PORT || 5000; // Vercel asignará su propio puerto
 
-// Carga de certificados desde tu ruta absoluta
-const key = fs.readFileSync("C:/mkcert/localhost-key.pem");
-const cert = fs.readFileSync("C:/mkcert/localhost.pem");
+// --- MIDDLEWARES ---
+// En producción (Vercel), el origen cambiará. Por ahora permitimos todo o configuramos dinámicamente.
+// Cuando subas el frontend, cambiarás este origin por la URL de Netlify.
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? process.env.FRONTEND_URL // Leerá esto de las variables de Vercel
+    : 'https://localhost:3000',
+  credentials: true 
+}));
 
-// Middlewares
-app.use(cors()); 
 app.use(
   helmet({
     crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
@@ -28,35 +33,42 @@ app.use(
     contentSecurityPolicy: false,
   })
 );
+
 app.use(express.json());
-app.use(morgan('dev')); // Logs en consola
+app.use(cookieParser());
+app.use(morgan('dev')); 
 
 // Rutas
 app.use('/api/auth', authRoutes); 
 
 app.get('/', (req, res) => {
-  res.send('¡Bienvenido a la API de la Estética Segura!');
+  res.send('¡API de Estética Funcionando en la Nube! 🚀');
 });
 
-app.get('/test-db', async (req, res) => {
+// --- ARRANCAR EL SERVIDOR (Lógica Híbrida) ---
+
+if (process.env.NODE_ENV === 'production') {
+  // --- MODO NUBE (VERCEL) ---
+  // En Vercel no usamos certificados manuales, Vercel se encarga.
+  // Solo exportamos la app o escuchamos en puerto estándar HTTP.
+  app.listen(port, () => {
+    console.log(`🚀 Servidor Nube corriendo en el puerto ${port}`);
+  });
+} else {
+  // --- MODO LOCAL (TU PC) ---
+  // Aquí sí usamos tus certificados mkcert para HTTPS
   try {
-    const [rows] = await db.query('SELECT 1 + 1 AS solution');
-    res.json({
-      success: true,
-      message: '¡Conexión a la base de datos exitosa!',
-      result: rows[0].solution
+    const key = fs.readFileSync(path.join(__dirname, 'certs', 'localhost-key.pem'));
+    const cert = fs.readFileSync(path.join(__dirname, 'certs', 'localhost.pem'));
+    
+    https.createServer({ key, cert }, app).listen(port, () => {
+      console.log(`🔒 Servidor LOCAL SEGURO en https://localhost:${port}`);
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error al conectar con la base de datos.',
-      error: error.message
-    });
+    console.error("No se encontraron certificados. Iniciando en modo HTTP inseguro (fallback).");
+    app.listen(port, () => console.log(`⚠️ Servidor HTTP en http://localhost:${port}`));
   }
-});
+}
 
-// --- INICIAR SERVIDOR ---
-// Usamos la variable 'port' (5000) en lugar de escribir 3000
-https.createServer({ key, cert }, app).listen(port, () => {
-  console.log(`🔒 Servidor SEGURO corriendo en https://localhost:${port}`);
-});
+// Necesario para Vercel Serverless
+module.exports = app;
